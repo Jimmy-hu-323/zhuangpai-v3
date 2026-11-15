@@ -2,10 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f5a4e">
   <title>撞牌 V3</title>
   <link rel="stylesheet" href="css/fonts.css">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20261115-2">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -19,9 +20,10 @@
         <play-card :card="{rank:'5',suit:'♦',color:'red'}" :up="true"></play-card>
       </div>
       <h1 class="title"><span class="title-seal">撞</span><span class="title-word">撞牌</span></h1>
-      <p class="tagline">两手庄家，一个目标。离目标最近的一手获胜，距离相同的一起出局。每局下完底注才抽目标：13 还是 22。</p>
+      <p class="tagline">三位玩家，共用两手庄家牌。每位玩家只与庄家 A、B 比较，玩家之间不比牌，也不会互相撞牌。</p>
+      <p class="lobby-note">先下注，再抽目标 13 或 22。真人与电脑都是同桌玩家，各自对庄家结算。</p>
       <ul class="hero-facts">
-        <li><b>13</b><small>撞庄局：两庄相撞，你赢 2 赔 1</small></li>
+        <li><b>13</b><small>撞庄局：因两庄相撞而获胜，2 赔 1</small></li>
         <li><b>22</b><small>命中局：正好 22，底注 2 赔 1</small></li>
         <li><b>3×</b><small>加注最多三倍底注</small></li>
       </ul>
@@ -37,7 +39,7 @@
           <button :class="{on: config.types[i]==='ai'}" @click="config.types[i]='ai'">电脑</button>
         </div>
       </div>
-      <p class="note" v-if="config.types.filter(t=>t==='human').length > 1">多名真人共用一台电脑时，轮到谁补牌会先出现遮挡页，其他人请回避。</p>
+      <p class="note" v-if="config.types.filter(t=>t==='human').length > 1">多名真人共用一台设备时，轮到谁补牌会先出现遮挡页，其他人请回避。</p>
 
       <div class="basic-grid">
         <label>起始筹码<input type="number" min="1000" step="1000" v-model.number="config.startChips"></label>
@@ -81,6 +83,7 @@
     </header>
 
     <div class="layout">
+      <p class="mobile-progress"><span>第 {{ round }} 局 · {{ progressTitle }}</span><small>玩家各自对庄家</small></p>
       <aside class="rail" aria-label="本局流程">
         <ol>
           <li v-for="(s, i) in steps" :key="s.key" :class="stepState(i)">
@@ -93,7 +96,7 @@
       <section class="table-wrap">
         <div class="table" :class="{ 'four-slot': maxSlots === 4 }">
           <div class="dealer-row">
-            <div class="hand dealer" v-for="d in dealers" :key="d.key" :class="['dealer-' + d.key, {stamped: stamps[d.key]}]">
+            <div class="hand dealer" v-for="d in dealers" :key="d.key" :class="['dealer-' + d.key, {stamped: stamps[d.key], 'comparison-winner': comparison && comparison.winner === d.key}]">
               <div class="hand-label">{{ d.name }}</div>
               <div class="cards">
                 <div class="slot" v-for="k in 3" :key="k">
@@ -104,7 +107,7 @@
                 总分 <b>{{ total(d.cards) }}</b><span class="dist">距离 {{ dist(d.cards) }}</span>
               </div>
               <div class="score muted" v-else>{{ d.cards.length ? '首牌盖住' : '等待发牌' }}</div>
-              <div class="stamp" v-if="stamps[d.key]">撞</div>
+              <div class="stamp" v-if="stamps[d.key]" :key="round + '-' + reviewSeat + '-' + d.key" aria-label="本次比较相撞">撞</div>
             </div>
             <div class="coin" :class="{shown: targetShown}">
               <div class="coin-inner">
@@ -115,20 +118,37 @@
             </div>
           </div>
 
-          <svg class="felt-print" viewBox="0 0 900 90" aria-hidden="true">
+          <p class="table-rule">每位玩家独立对庄家 A、B · 玩家之间不比牌、不相撞</p>
+          <section class="comparison" v-if="comparison" :key="round + '-' + reviewSeat" aria-label="当前玩家与庄家的比较" aria-live="polite">
+            <p class="comparison-title">正在查看：<b>{{ reviewPlayer.name }}</b> 对庄家</p>
+            <div class="comparison-hands">
+              <div v-for="hand in comparisonHands" :key="hand.key" class="comparison-hand" :class="{collided: comparison.collided.includes(hand.key), winner: comparison.winner === hand.key}">
+                <span>{{ hand.label }}</span><strong>{{ hand.distance }}</strong><small>{{ comparison.collided.includes(hand.key) ? '同距相撞' : comparison.winner === hand.key ? '本次获胜' : '未相撞' }}</small>
+              </div>
+            </div>
+            <p class="comparison-caption">{{ reviewPlayer.result.lines[0] }}</p>
+            <small class="comparison-note">数字为与目标的距离；本次判定不影响其他玩家。</small>
+          </section>
+          <svg v-else class="felt-print" viewBox="0 0 900 90" aria-hidden="true">
             <path id="arc" d="M 40 80 Q 450 -20 860 80" fill="none"></path>
             <text><textPath href="#arc" startOffset="50%" text-anchor="middle">{{ feltText }}</textPath></text>
           </svg>
 
+          <nav class="seat-tabs" aria-label="切换玩家视角">
+            <button v-for="(p, i) in players" :key="i" :style="{'--seat': seatColors[i]}" :class="{selected: mobileSeat === i, waiting: pending && pending.seat === i}" :aria-pressed="mobileSeat === i" :aria-controls="'seat-panel-' + i" @click="selectSeat(i)">
+              <span>{{ p.name }}</span><small>{{ seatStatus(p) }}</small>
+            </button>
+          </nav>
           <div class="seats">
             <div class="seat" v-for="(p, i) in players" :key="i"
-                 :class="{active: activeSeat === i, thinking: thinking === i, stamped: stamps['P' + i], folded: p.lock === 'fold' && phase !== 'lock',
+                 :id="'seat-panel-' + i" :aria-label="p.name + '的手牌'"
+                 :class="{active: activeSeat === i, 'mobile-selected': mobileSeat === i, reviewing: reviewSeat === i, thinking: thinking === i, stamped: stamps['P' + i], folded: p.lock === 'fold' && phase !== 'lock',
                           won: p.result && (p.result.kind === 'win' || p.result.kind === 'bonus'), lost: p.result && p.result.kind === 'lose'}"
                  :style="{'--seat': seatColors[i]}">
               <div class="seat-head">
                 <span class="order-badge">第 {{ orderPos(i) }} 位</span>
                 <span class="seat-name">{{ p.name }}</span>
-                <span class="seat-kind">{{ p.type === 'human' ? '真人' : '电脑' }}</span>
+                <span class="seat-kind">{{ p.type === 'human' ? '真人玩家' : '电脑玩家' }}</span>
               </div>
               <div class="cards">
                 <div class="slot" v-for="k in maxSlots" :key="k">
@@ -148,7 +168,7 @@
               <div class="bank">筹码 <b>{{ fmt(p.chips) }}</b></div>
               <div class="lock-badge" v-if="p.lock" :class="[p.lockShown ? p.lock : 'hidden']">{{ lockLabel(p) }}</div>
               <div class="think" v-if="thinking === i">思考中</div>
-              <div class="stamp" v-if="stamps['P' + i]">撞</div>
+              <div class="stamp" v-if="stamps['P' + i]" :key="round + '-' + reviewSeat + '-P' + i" aria-label="与庄家同距相撞">撞</div>
             </div>
           </div>
 
@@ -161,23 +181,24 @@
         </div>
       </section>
 
-      <aside class="log" aria-label="牌局记录">
+      <aside class="log" :class="{expanded: showLog}" aria-label="牌局记录">
         <h3>牌局记录</h3>
-        <ul>
+        <button class="log-toggle" @click="showLog = !showLog" :aria-expanded="showLog" aria-controls="round-log">{{ showLog ? '收起牌局记录 −' : '查看牌局记录 +' }}</button>
+        <ul id="round-log">
           <li v-for="l in log" :key="l.id" :class="l.kind">{{ l.text }}</li>
         </ul>
       </aside>
     </div>
 
     <!-- 操作区 -->
-    <footer class="dock">
+    <footer class="dock" :class="{'round-summary': phase === 'roundEnd'}">
       <template v-if="pending">
         <div class="prompt" :style="{'--seat': seatColors[pending.seat]}">
           <span class="who">{{ pendingPlayer.name }}</span>
           <template v-if="pending.kind === 'ante'"><h3>下底注</h3><p>目标还没抽出。底注 100 至 5,000，以 100 为单位。</p></template>
           <template v-if="pending.kind === 'side' && target === 13"><h3>买开局注吗</h3><p>从底注划出 {{ fmt(pendingPlayer.ante * 0.1) }}，主注剩 {{ fmt(pendingPlayer.ante * 0.9) }}。两张庄家首牌都是 10 点牌就中，净赢 9 倍，整桌结束、主注全退。</p></template>
-          <template v-if="pending.kind === 'side' && target === 22"><h3>买终局注吗</h3><p>另付 {{ fmt(pendingPlayer.ante * 0.1) }}。两手庄家补完牌后同距就中，净赢 8.1 倍；弃牌后仍然有效。</p></template>
-          <template v-if="pending.kind === 'lock'"><h3>继续、加注还是弃牌</h3><p>你的牌总分 {{ total(pendingPlayer.cards) }}，距离 {{ dist(pendingPlayer.cards) }}。三人选好后同时亮出。加注后必须再拿一张然后停牌。</p></template>
+          <template v-if="pending.kind === 'side' && target === 22"><h3>买终局注吗</h3><p>另付 {{ fmt(pendingPlayer.ante * 0.1) }}。两手庄家补完牌后同距就中，净赢 {{ E.sideNet(22) }} 倍（8赔1），另退本金；弃牌后仍然有效。</p></template>
+          <template v-if="pending.kind === 'lock'"><h3>选择本局行动</h3><p>总分 {{ total(pendingPlayer.cards) }}，距离 {{ dist(pendingPlayer.cards) }}。三人选好后同时亮出；加注后必须补一张并停牌。</p></template>
           <template v-if="pending.kind === 'play'"><h3>要牌还是停牌</h3><p>你的牌总分 {{ total(pendingPlayer.cards) }}，距离 {{ dist(pendingPlayer.cards) }}。已有 {{ pendingPlayer.cards.length }} 张，最多 {{ T.maxCards }} 张，停牌后不能反悔。</p></template>
         </div>
 
@@ -223,7 +244,8 @@
           <button class="big stand" @click="answer('stand')">停牌<small>S</small></button>
         </div>
 
-        <div class="hint" v-if="hint">
+        <button class="hint-toggle" v-if="hint" @click="showHint = !showHint" :aria-expanded="showHint" aria-controls="decision-hint">{{ showHint ? '收起期望提示 −' : '查看期望提示 +' }}</button>
+        <div id="decision-hint" class="hint" :class="{expanded: showHint}" v-if="hint">
           <template v-if="hint.kind === 'lock'">
             <div class="hint-col" :class="{best: lockEVs().best === 'fold'}"><b>弃牌</b><span>期望 {{ ev(lockEVs().fold) }}</span></div>
             <div class="hint-col" :class="{best: lockEVs().best === 'cont'}"><b>继续</b><span>期望 {{ ev(lockEVs().cont) }}</span></div>
@@ -232,7 +254,7 @@
           </template>
           <template v-else-if="hint.kind === 'play'">
             <div class="hint-col" :class="{best: hint.best === 'stand'}">
-              <b>停牌</b><span>胜 {{ pct(hint.prob.win) }}，全撞 {{ pct(hint.prob.push) }}</span><span>期望 {{ ev(hint.stand) }}</span>
+              <b>停牌</b><span>胜 {{ pct(hint.prob.win) }}，与两庄同距 {{ pct(hint.prob.push) }}</span><span>期望 {{ ev(hint.stand) }}</span>
             </div>
             <div class="hint-col" :class="{best: hint.best === 'hit'}" v-if="hint.hit !== null">
               <b>要牌</b><span>按最佳打法继续</span><span>期望 {{ ev(hint.hit) }}</span>
@@ -245,10 +267,12 @@
 
       <template v-else-if="phase === 'roundEnd'">
         <div class="results">
-          <div class="result" v-for="(p, i) in players" :key="i" :class="p.result && p.result.kind" :style="{'--seat': seatColors[i]}">
+          <div class="result" v-for="(p, i) in players" :key="i" :class="[p.result && p.result.kind, {selected: reviewSeat === i}]" :style="{'--seat': seatColors[i]}">
             <div class="result-head"><span class="seat-name">{{ p.name }}</span><span class="net" :class="p.net > 0 ? 'pos' : p.net < 0 ? 'neg' : ''">{{ money(p.net) }}</span></div>
             <b>{{ p.result ? p.result.title : '' }}</b>
+            <div class="result-distances" v-if="p.result && p.result.comparison"><span>自己 <b>{{ p.result.comparison.pd }}</b></span><span>庄家 A <b>{{ p.result.comparison.ad }}</b></span><span>庄家 B <b>{{ p.result.comparison.bd }}</b></span></div>
             <small v-for="(line, j) in (p.result ? p.result.lines : [])" :key="j">{{ line }}</small>
+            <button class="review-button" v-if="p.result && p.result.comparison" @click="selectReview(i, true)" :aria-pressed="reviewSeat === i">{{ reviewSeat === i ? '已显示这位玩家的比牌' : '查看这位玩家的比牌' }}</button>
           </div>
         </div>
         <button class="primary next" @click="startRound">下一局<small>Enter</small></button>
@@ -262,7 +286,7 @@
           <template v-else-if="phase === 'lock'">三人同时亮出选择</template>
           <template v-else-if="phase === 'play'">发牌中</template>
           <template v-else-if="phase === 'dealer'">庄家按规则补牌</template>
-          <template v-else-if="phase === 'settle'">公开所有暗牌，逐一结算</template>
+          <template v-else-if="phase === 'settle'">{{ reviewPlayer ? reviewPlayer.name + ' 正在与庄家 A、B 比较' : '公开暗牌，每位玩家独立结算' }}</template>
           <template v-else>请稍候</template>
         </p>
       </template>
@@ -281,37 +305,38 @@
 
   <!-- ===================== 规则 ===================== -->
   <div class="modal" v-if="showRules" @click.self="showRules = false">
-    <article class="rules">
+    <article class="rules" role="dialog" aria-modal="true" aria-labelledby="rules-title">
       <button class="close" @click="showRules = false" aria-label="关闭">×</button>
-      <h2>撞牌 Version 3 规则</h2>
-      <p class="rules-lead">三名玩家共用庄家 A、B 两手牌，每名玩家只和这两手比，玩家之间不比。两副牌，每局重新洗牌。A 计 1 点，2 至 9 按牌面，10、J、Q、K 计 10 点。</p>
+      <h2 id="rules-title">撞牌 Version 3 规则</h2>
+      <p class="rules-lead">三名玩家共用庄家 A、B 两手牌。每名玩家只与两手庄家比较，玩家之间不比牌，也不会互相撞牌。真人与电脑都是同桌玩家，各自结算。两副牌，每局重新洗牌。A 计 1 点，2 至 9 按牌面，10、J、Q、K 计 10 点。</p>
       <h3>每局随机抽目标</h3>
       <p>三人下完底注后，从“13”和“22”中随机抽一个，各占一半。距离＝|总分－目标|，超过目标不算爆牌。</p>
-      <table class="odds-table">
+      <div class="rules-table-wrap" tabindex="0" role="region" aria-label="两种目标的规则，窄屏可左右滑动"><table class="odds-table">
         <tr><th></th><th>目标 13 撞庄局</th><th>目标 22 命中局</th></tr>
         <tr><td>玩家起手</td><td>1 张公开，最多 3 张</td><td>2 张公开，最多 4 张</td></tr>
         <tr><td>庄家</td><td>1 张暗牌起手，不足 10 必补，最多 3 张</td><td>1 张暗牌起手，不足 19 必补，最多 3 张</td></tr>
-        <tr><td>边注</td><td>开局注：从底注划出 10%，庄家首牌 10／10 净赢 9 倍，整桌结束、主注全退</td><td>终局注：另付底注 10%，两庄终局同距净赢 8.1 倍</td></tr>
+        <tr><td>边注</td><td>开局注：从底注划出 10%，庄家首牌 10／10 净赢 9 倍，整桌结束、主注全退</td><td>终局注：另付底注 10%，两庄终局同距净赢 {{ E.sideNet(22) }} 倍（8赔1），另退本金</td></tr>
         <tr><td>主游戏</td><td>普通获胜 1 赔 1；两庄相撞获胜 2 赔 1（含加注）</td><td>普通获胜 1 赔 1；正好 22 并获胜，原底注 2 赔 1、加注 1 赔 1</td></tr>
-      </table>
+      </table></div>
       <h3>继续、加注或弃牌</h3>
       <p>翻开庄家首牌后、任何人补牌前，三人同时亮出选择：普通继续（最多两次要牌判断）；加注（最多三倍底注、以 100 为单位，加注后必须再拿一张然后停牌）；弃牌（退回主注的 60%，边注照常结算）。</p>
-      <h3>比牌：先撞后比</h3>
+      <h3>每位玩家分别比牌：先撞后比</h3>
       <ul>
-        <li>三个距离各不相同：距离最小者胜。</li>
-        <li>玩家与一手庄家同距：两者一起出局，另一手庄家胜，玩家输。</li>
-        <li>两手庄家同距：庄家一起出局，玩家胜。</li>
-        <li>三手全部同距：主注退回。</li>
+        <li>你、庄家 A、庄家 B 的距离都不同：三者之中距离最小者胜。</li>
+        <li>你只与一手庄家同距：本次比较中你与该庄家相撞，另一手庄家获胜。不会影响其他玩家的比较。</li>
+        <li>两手庄家同距，而你的距离不同：两庄相撞，你获胜。</li>
+        <li>你与两手庄家都同距：退回你的主注（含加注），其他玩家仍各自结算。</li>
       </ul>
-      <p class="note">依据《撞牌游戏 Version 3——双主题改良版完整规则》。模拟结果：按最佳打法，目标 13 主游戏赌场优势约 3.0%，目标 22 约 3.4%；开局注 7.39%，终局注约 4.8%。</p>
+      <p>例如目标 22，庄家 A 为 19、B 为 18，两名玩家分别为 20、24：两位玩家距离都是 2，各自胜过两庄，两人都赢，不会互撞。</p>
+      <p class="note">终局边注8赔1：押100，中奖净赢800，连本金返还900，不再另扣费用。以原有长期同距概率估计10.46%计算，终局注赌场优势约 {{ ((1 - E.P_FINAL_COLLIDE_22 * (1 + E.sideNet(22))) * 100).toFixed(2) }}%；这是估计值，不是本局中奖保证。其他赔付规则保持原版。</p>
     </article>
   </div>
 </div>
 
 <script src="lib/vue.global.prod.js"></script>
 <script src="lib/confetti.browser.js"></script>
-<script src="js/engine.js"></script>
+<script src="js/engine.js?v=20261115-2"></script>
 <script src="js/sound.js"></script>
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20261115-2"></script>
 </body>
 </html>

@@ -45,7 +45,7 @@
     { key: 'lock', title: '继续、加注或弃牌', desc: '三人同时亮出' },
     { key: 'play', title: '玩家补牌', desc: '补来的牌只有自己能看' },
     { key: 'dealer', title: '庄家补牌', desc: '按固定门槛' },
-    { key: 'settle', title: '比牌结算', desc: '先撞后比' },
+    { key: 'settle', title: '独立比牌结算', desc: '每位玩家分别对庄家A、B' },
   ];
 
   /* ---------------- 扑克牌组件 ---------------- */
@@ -57,7 +57,7 @@
     template: `
       <div class="card" :class="{ up: up, red: card && card.color === 'red' }">
         <div class="card-inner">
-          <div class="card-face card-front" v-if="card">
+          <div class="card-face card-front" v-if="card" :aria-hidden="!up">
             <div class="corner tl"><b>{{ card.rank }}</b><i>{{ card.suit }}</i></div>
             <div class="pip" :class="{ court: face }">
               <template v-if="face"><span class="court-letter">{{ card.rank }}</span><span class="court-suit">{{ card.suit }}</span></template>
@@ -65,7 +65,7 @@
             </div>
             <div class="corner br"><b>{{ card.rank }}</b><i>{{ card.suit }}</i></div>
           </div>
-          <div class="card-face card-back"><span class="back-seal">撞</span></div>
+          <div class="card-face card-back" :aria-hidden="up" aria-label="暗牌"><span class="back-seal" aria-hidden="true">撞</span></div>
         </div>
       </div>`,
   };
@@ -78,6 +78,10 @@
         config: loadConfig(),
         showAdvanced: false,
         showRules: false,
+        showLog: false,
+        showHint: false,
+        mobileSeat: 0,
+        reviewSeat: -1,
         muted: false,
         token: 0,
 
@@ -111,8 +115,20 @@
       humanCount() { return this.players.filter((p) => p.type === 'human').length; },
       stepIndex() { return STEPS.findIndex((s) => s.key === this.phase); },
       maxSlots() { return this.T ? this.T.maxCards : 3; },
+      reviewPlayer() { return this.reviewSeat >= 0 ? this.players[this.reviewSeat] : null; },
+      comparison() { return this.reviewPlayer && this.reviewPlayer.result && this.reviewPlayer.result.comparison; },
+      progressTitle() { return this.phase === 'roundEnd' ? '本局已结算' : (STEPS[this.stepIndex] || {}).title || '准备开始'; },
+      comparisonHands() {
+        if (!this.comparison) return [];
+        const c = this.comparison;
+        return [
+          { key: 'P', label: this.reviewPlayer.name, distance: c.pd },
+          { key: 'A', label: '庄家 A', distance: c.ad },
+          { key: 'B', label: '庄家 B', distance: c.bd },
+        ];
+      },
       feltText() {
-        if (!this.T) return '两手庄家，一个目标，撞者出局';
+        if (!this.T) return '各自对庄家，玩家之间不比牌';
         return this.target === 13
           ? '撞庄局　两庄相撞获胜 2 赔 1　庄家不足 10 必须补牌'
           : '命中局　正好 22 底注 2 赔 1　庄家不足 19 必须补牌';
@@ -127,6 +143,9 @@
 
     watch: {
       muted(v) { S.setMuted(v); },
+      activeSeat(seat) {
+        if (seat >= 0 && this.players[seat].type === 'human') this.mobileSeat = seat;
+      },
     },
 
     mounted() {
@@ -155,6 +174,29 @@
       seatName(i) { return this.players[i] ? this.players[i].name : ''; },
       orderPos(seat) { return this.order.indexOf(seat) + 1; },
       floor100(x) { return Math.floor(x / E.UNIT) * E.UNIT; },
+      selectSeat(seat) {
+        this.mobileSeat = seat;
+        if (this.phase === 'roundEnd') this.selectReview(seat);
+      },
+      selectReview(seat, scroll = false) {
+        this.reviewSeat = seat;
+        this.mobileSeat = seat;
+        const c = this.players[seat].result && this.players[seat].result.comparison;
+        if (!c) { this.stamps = this.openCollision ? { A: true, B: true } : {}; return; }
+        const stamps = {};
+        for (const key of c.collided) stamps[key === 'P' ? 'P' + seat : key] = true;
+        this.stamps = stamps;
+        if (scroll) this.$nextTick(() => {
+          const panel = document.querySelector('.comparison');
+          if (panel) panel.scrollIntoView({ block: 'start', behavior: 'auto' });
+        });
+      },
+      seatStatus(p) {
+        if (p.result) return this.money(p.net);
+        if (this.pending && this.pending.seat === p.seat) return '等你操作';
+        if (p.lockShown && p.lock === 'fold') return '已弃牌';
+        return p.type === 'human' ? '真人玩家' : '电脑玩家';
+      },
 
       betLimits(kind, seat) {
         const p = this.players[seat];
@@ -204,14 +246,20 @@
         this.stats = { rounds: 0, houseNet: 0, opens: 0, rebuys: 0, r13: 0, r22: 0 };
         this.log = [];
         this.round = 0;
+        this.mobileSeat = Math.max(0, this.players.findIndex((p) => p.type === 'human'));
+        this.reviewSeat = -1;
+        this.showLog = false;
+        this.showHint = false;
         this.screen = 'game';
         S.reveal();
-        this.$nextTick(() => this.startRound());
+        this.$nextTick(() => { window.scrollTo(0, 0); this.startRound(); });
       },
       backToLobby() {
         this.token++;
         this.pending = null; this.curtain = null; this.phase = 'idle';
+        this.reviewSeat = -1;
         this.screen = 'setup';
+        this.$nextTick(() => window.scrollTo(0, 0));
       },
 
       /* ---------- 等待真人操作 ---------- */
@@ -221,6 +269,14 @@
           const lim = this.betLimits(kind, seat);
           if (lim) this.amount = kind === 'lock' ? lim.min : Math.min(lim.max, Math.max(lim.min, this.players[seat].lastAnte || lim.min));
           this.computeHint(kind, seat);
+          this.$nextTick(() => {
+            if (!window.matchMedia('(max-width: 640px)').matches) return;
+            const hand = document.getElementById('seat-panel-' + seat);
+            const dock = document.querySelector('.dock');
+            if (!hand || !dock) return;
+            const overlap = hand.getBoundingClientRect().bottom - dock.getBoundingClientRect().top;
+            if (overlap > 0) window.scrollBy(0, overlap + 12);
+          });
         });
       },
       answer(value) {
@@ -246,6 +302,7 @@
         else this.answer({ opt, C: 0 });
       },
       onKey(e) {
+        if (this.showRules) { if (e.key === 'Escape') this.showRules = false; return; }
         if (this.screen !== 'game' || e.target.tagName === 'INPUT') return;
         const k = e.key.toLowerCase();
         if (this.curtain && (k === 'enter' || k === ' ')) { e.preventDefault(); this.curtain.resolve(); return; }
@@ -289,7 +346,7 @@
           } else {
             const pr = E.P_FINAL_COLLIDE_22;
             const evOne = pr * (1 + E.sideNet(22)) - 1;
-            this.hint = { kind, text: `两手庄家终局同距的概率约 ${this.pct(pr)}。押中净赢 8.1 倍，这 ${this.fmt(amt)} 的期望约 ${this.ev(evOne * amt)}。` };
+            this.hint = { kind, text: `两手庄家终局同距的长期概率估计约 ${this.pct(pr)}。终局注 ${E.sideNet(22)} 赔 1（净赢），另退本金；这 ${this.fmt(amt)} 的期望约 ${this.ev(evOne * amt)}。` };
           }
         } else if (kind === 'lock') {
           const lim = this.betLimits('lock', seat);
@@ -360,6 +417,7 @@
         this.phase = 'ante';
         this.openCollision = false;
         this.stamps = {};
+        this.reviewSeat = -1;
         this.banner = null;
         this.target = null;
         this.targetShown = false;
@@ -501,6 +559,10 @@
           const p = this.players[seat];
           if (p.lock === 'fold') continue;
           this.activeSeat = seat;
+          if (p.type === 'human' && this.humanCount > 1) {
+            this.banner = null;
+            await w(new Promise((resolve) => { this.curtain = { seat, resolve: () => { this.curtain = null; resolve(); } }; }));
+          }
           if (p.lock === 'raise') {
             await w(this.sp(500));
             p.cards.push(G.slots[G.handOf[seat]][p.cards.length]);
@@ -509,10 +571,6 @@
             this.addLog(`${p.name} 加注后补一张，停牌`);
             await w(this.sp(450));
             continue;
-          }
-          if (p.type === 'human' && this.humanCount > 1) {
-            this.banner = null;
-            await w(new Promise((resolve) => { this.curtain = { seat, resolve: () => { this.curtain = null; resolve(); } }; }));
           }
           while (p.cards.length < this.T.maxCards) {
             const act = await this.decide('play', seat, w);
@@ -549,16 +607,15 @@
         const ad = this.dist(this.dealers[0].cards);
         const bd = this.dist(this.dealers[1].cards);
         const dealersCollide = ad === bd;
-        const stamps = {};
-        if (dealersCollide) { stamps.A = true; stamps.B = true; }
         let anyHumanWin = false, anyWin = false, anyBonus = false;
         for (const seat of this.order) {
           const p = this.players[seat];
           let ret = 0;
+          let comparison = null;
           const lines = [];
           // 终局注（仅22）
           if (this.target === 22 && p.side) {
-            if (dealersCollide) { const r = E.sideReturn(22, p.side); ret += r; lines.push(`终局注中奖，返还 ${this.fmt(r)}`); }
+            if (dealersCollide) { const r = E.sideReturn(22, p.side); ret += r; lines.push(`终局注8赔1：净赢 ${this.fmt(r - p.side)}，连本金返还 ${this.fmt(r)}`); }
             else lines.push('终局注未中');
           }
           if (this.target === 13 && p.side) lines.push('开局注未中');
@@ -572,22 +629,27 @@
             const res = E.compare(pd, ad, bd);
             main = E.settleMain(this.target, res, pd, p.M, p.raise);
             ret += main.ret;
-            if (res.outcome !== 'win' && (pd === ad || pd === bd)) stamps['P' + seat] = true;
-            lines.unshift(`距离：自己 ${pd}，庄家A ${ad}，庄家B ${bd}`);
+            const collided = res.caseNo === 4 ? ['P', 'A', 'B']
+              : res.caseNo === 3 ? ['A', 'B'] : res.caseNo === 2 ? ['P', res.hitBy] : [];
+            comparison = { pd, ad, bd, collided, winner: res.winner };
             if (main.kind === 'win' || main.kind === 'bonus') { anyWin = true; if (p.type === 'human') anyHumanWin = true; }
             if (main.kind === 'bonus') anyBonus = true;
           }
           p.chips += ret;
           p.net = ret - p.paid;
-          p.result = { kind: main.kind, title: main.title, lines: [main.text].concat(lines) };
+          p.result = { kind: main.kind, title: main.title, lines: [main.text].concat(lines), comparison };
           this.stats.houseNet -= p.net;
           this.addLog(`${p.name}：${main.title}，本局 ${this.money(p.net)}`, p.net > 0 ? 'good' : p.net < 0 ? 'bad' : '');
+          this.selectReview(seat);
+          if (comparison && comparison.collided.length) S.stamp();
+          await w(this.sp(1100));
         }
-        if (Object.keys(stamps).length) { this.stamps = stamps; S.stamp(); }
+        this.selectReview(Math.max(0, this.players.findIndex((p) => p.type === 'human')));
         await w(this.sp(350));
         if (anyBonus) {
-          if (this.target === 13) this.flash('撞庄！2 赔 1', 'seal', 1800);
-          else this.flash('命中 22！', 'gold', 1800, '原底注 2 赔 1');
+          const names = this.players.filter((p) => p.result.kind === 'bonus').map((p) => p.name).join('、');
+          if (this.target === 13) this.flash('撞庄！2 赔 1', 'seal', 1800, `${names} 各自获胜；其余玩家按各自结果结算`);
+          else this.flash('命中 22！', 'gold', 1800, `${names}：底注2赔1，加注1赔1`);
         }
         if (anyHumanWin || (anyWin && this.humanCount === 0)) { S.win(); this.burst(); }
         else if (!anyWin) S.lose();

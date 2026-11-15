@@ -60,6 +60,6 @@ for (const target of [13, 22]) {
   const pct = (x) => (x * 100).toFixed(2) + '%';
   console.log(`\n== 目标 ${target}「${cfg.name}」 ${N} 局 ==`);
   console.log(`主游戏赌场优势：${pct(-st.net / st.wager)}（不买边注、按最佳打法；分母为底注＋加注）`);
-  console.log(`弃牌 ${pct(st.fold / N)}，加注 ${pct(st.raise / N)}，${cfg.bonusName} ${pct(st.bonus / N)}，普通获胜 ${pct(st.win / N)}，三手全撞 ${pct(st.push / N)}，输 ${pct(st.lose / N)}${target === 13 ? `，开局10/10结束 ${pct(st.open / N)}` : ''}`);
+  console.log(`弃牌 ${pct(st.fold / N)}，加注 ${pct(st.raise / N)}，${cfg.bonusName} ${pct(st.bonus / N)}，普通获胜 ${pct(st.win / N)}，玩家与两庄同距 ${pct(st.push / N)}，输 ${pct(st.lose / N)}${target === 13 ? `，开局10/10结束 ${pct(st.open / N)}` : ''}`);
   console.log(`${cfg.sideName}（每局都买）赌场优势：${pct(-st.sideNet / st.sideBet)}`);
 }

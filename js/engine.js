@@ -19,7 +19,7 @@
   /* ---------------- 固定参数（规则第六、九、十三节） ---------------- */
   const DECKS = 2;              // 两副牌，104 张
   const SIDE_RATE = 0.1;        // B、F 都是原底注的 10%
-  const SIDE_FEE = 0.1;         // 边注奖金收 10% 费用
+  const SIDE_FEE = 0.1;         // 仅目标13的开局注奖金收10%费用
   const FOLD_REFUND = 0.6;      // 弃牌退回剩余主注的 60%
   const RAISE_CAP = 3;          // 加注上限 3A
   const UNIT = 100;             // 底注、加注以 100 为单位
@@ -29,17 +29,17 @@
   const TARGETS = {
     13: {
       target: 13, name: '撞庄局', start: 1, maxCards: 3, dealerStand: 10,
-      side: 'B', sideName: '开局撞牌注', sideOdds: 10, // 扣费前 10:1
+      side: 'B', sideName: '开局撞牌注', sideOdds: 10, sideFee: SIDE_FEE,
       bonusName: '撞庄获胜', bonusText: '两庄相撞获胜 2 赔 1（含加注）',
     },
     22: {
       target: 22, name: '命中局', start: 2, maxCards: 4, dealerStand: 19,
-      side: 'F', sideName: '终局撞牌注', sideOdds: 9, // 扣费前 9:1
+      side: 'F', sideName: '终局撞牌注', sideOdds: 8, sideFee: 0, // 净赢8:1，另退本金
       bonusName: '命中 22', bonusText: '正好 22 并获胜，原底注 2 赔 1',
     },
   };
-  /** 边注扣费后的净赔：B 为 9，F 为 8.1 */
-  const sideNet = (target) => TARGETS[target].sideOdds * (1 - SIDE_FEE);
+  /** 边注最终净赔：开局注9:1，终局注8:1 */
+  const sideNet = (target) => TARGETS[target].sideOdds * (1 - TARGETS[target].sideFee);
 
   function rankValue(r) {
     if (r === 'A') return 1;
@@ -97,7 +97,7 @@
     return target === 13 && aVal === 10 && bVal === 10;
   }
 
-  /** 比牌四种情况（规则第十二节） */
+  /** 只比较一名玩家与庄家A、B。每位玩家重新比较，玩家之间不比牌、不相撞。 */
   function compare(pd, ad, bd) {
     if (pd === ad && pd === bd) return { outcome: 'push', caseNo: 4, winner: null };
     if (ad === bd) return { outcome: 'win', caseNo: 3, winner: 'P' };
@@ -114,9 +114,9 @@
    */
   function settleMain(target, res, pd, M, C) {
     const K = M + C;
-    if (res.outcome === 'push') return { ret: K, kind: 'push', title: '三手全撞', text: '三手距离相同，主注退回' };
+    if (res.outcome === 'push') return { ret: K, kind: 'push', title: '你与两庄同距', text: '你、庄家A、庄家B同距，退回你的主注（含加注）' };
     if (res.outcome === 'lose') {
-      if (res.caseNo === 2) return { ret: 0, kind: 'lose', title: `被庄家${res.hitBy}撞掉`, text: `与庄家${res.hitBy}同距一起出局，庄家${res.winner}获胜` };
+      if (res.caseNo === 2) return { ret: 0, kind: 'lose', title: `与庄家${res.hitBy}相撞`, text: `本次比较中，你与庄家${res.hitBy}同距出局，庄家${res.winner}获胜` };
       return { ret: 0, kind: 'lose', title: '主游戏落败', text: `庄家${res.winner}距离最近` };
     }
     if (target === 13 && res.caseNo === 3) return { ret: 3 * K, kind: 'bonus', title: '撞庄获胜', text: '两庄相撞出局，主注 2 赔 1' };
